@@ -7,7 +7,7 @@ st.set_page_config(layout="wide")
 st.title("🎨 Face Fun Factory – 5 Transformations + Bunny Ears")
 
 # Load bunny ears
-BUNNY_PATH = "assets/bunny_ears.png"
+BUNNY_PATH = "assets/bunny-ears.png"
 bunny = Image.open(BUNNY_PATH)
 bunny = np.array(bunny)
 
