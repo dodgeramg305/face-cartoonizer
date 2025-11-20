@@ -5,27 +5,21 @@ from PIL import Image
 import mediapipe as mp
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
-
 st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# ---------------------------------------------------
-# FUNCTION: Mild Pixelation (Option A)
-# ---------------------------------------------------
-def pixelate(img, pixel_size=25):
+# -----------------------------
+# Function: Pixelate (softer)
+# -----------------------------
+def pixelate(img, scale=20):
     h, w = img.shape[:2]
+    temp = cv2.resize(img, (w//scale, h//scale), interpolation=cv2.INTER_LINEAR)
+    return cv2.resize(temp, (w, h), interpolation=cv2.INTER_NEAREST)
 
-    # shrink image
-    small = cv2.resize(img, (w // pixel_size, h // pixel_size), interpolation=cv2.INTER_LINEAR)
-
-    # grow back blocky
-    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
-
-
-# ---------------------------------------------------
-# FUNCTION: Pencil Sketch
-# ---------------------------------------------------
+# -----------------------------
+# Function: Pencil Sketch
+# -----------------------------
 def pencil_sketch(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     inv = 255 - gray
@@ -33,88 +27,67 @@ def pencil_sketch(img):
     sketch = cv2.divide(gray, 255 - blur, scale=256)
     return cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
 
-
-# ---------------------------------------------------
-# FUNCTION: Hide Eyes using FaceMesh
-# ---------------------------------------------------
+# -----------------------------
+# Function: Hide Eyes (smaller circles)
+# -----------------------------
 mp_face_mesh = mp.solutions.face_mesh
 
 def hide_eyes(img):
-
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     h, w = img.shape[:2]
 
-    # Load Mediapipe model
-    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1) as face_mesh:
-        results = face_mesh.process(rgb)
+    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1) as fm:
+        res = fm.process(rgb)
+        if not res.multi_face_landmarks:
+            return img
 
-        if not results.multi_face_landmarks:
-            return img  # No face detected
+        face = res.multi_face_landmarks[0]
 
-        face = results.multi_face_landmarks[0]
+        left_pts = [face.landmark[i] for i in [33, 133]]
+        right_pts = [face.landmark[i] for i in [362, 263]]
 
-        # Key eye points (left + right)
-        left_eye_idxs = [33, 133]
-        right_eye_idxs = [362, 263]
+        def px(pt): return int(pt.x * w), int(pt.y * h)
 
-        # Convert to pixel positions
-        def to_px(lm):
-            return int(lm.x * w), int(lm.y * h)
+        lx1, ly1 = px(left_pts[0])
+        lx2, ly2 = px(left_pts[1])
+        rx1, ry1 = px(right_pts[0])
+        rx2, ry2 = px(right_pts[1])
 
-        # Left eye
-        lx1, ly1 = to_px(face.landmark[left_eye_idxs[0]])
-        lx2, ly2 = to_px(face.landmark[left_eye_idxs[1]])
+        # Smaller radius
+        left_r = int(np.linalg.norm([lx1-lx2, ly1-ly2]) * 0.9)
+        right_r = int(np.linalg.norm([rx1-rx2, ry1-ry2]) * 0.9)
 
-        # Right eye
-        rx1, ry1 = to_px(face.landmark[right_eye_idxs[0]])
-        rx2, ry2 = to_px(face.landmark[right_eye_idxs[1]])
+        out = img.copy()
+        cv2.circle(out, (lx1, ly1), left_r, (0, 0, 0), -1)
+        cv2.circle(out, (rx1, ry1), right_r, (0, 0, 0), -1)
+        return out
 
-        # Radius proportional to eye size — MUCH smaller than before
-        left_r = int(np.linalg.norm([lx1 - lx2, ly1 - ly2]) * 0.9)
-        right_r = int(np.linalg.norm([rx1 - rx2, ry1 - ry2]) * 0.9)
-
-        output = img.copy()
-
-        # Draw black circles (small, clean)
-        cv2.circle(output, (lx1, ly1), left_r, (0, 0, 0), -1)
-        cv2.circle(output, (rx1, ry1), right_r, (0, 0, 0), -1)
-
-        return output
-
-
-# ---------------------------------------------------
-# DISPLAY RESULTS
-# ---------------------------------------------------
+# -----------------------------
+# Display Output
+# -----------------------------
 if uploaded:
-
-    # PIL → numpy
     img = Image.open(uploaded)
     img = np.array(img)
 
-    # Convert to BGR for OpenCV
     img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
-    col1, col2, col3 = st.columns(3)
-    col4, col5 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
+    c4, c5 = st.columns(2)
 
-    # --- Original
-    with col1:
+    with c1:
         st.image(img, caption="Original", use_column_width=True)
 
-    # --- Pixelated (mild)
-    with col2:
-        pix = pixelate(img_bgr)
-        st.image(cv2.cvtColor(pix, cv2.COLOR_BGR2RGB),
+    with c2:
+        pixel = pixelate(img_bgr, scale=35)
+        st.image(cv2.cvtColor(pixel, cv2.COLOR_BGR2RGB),
                  caption="Pixelated Face", use_column_width=True)
 
-    # --- Eyes Hidden
-    with col3:
+    with c3:
         hidden = hide_eyes(img_bgr)
         st.image(cv2.cvtColor(hidden, cv2.COLOR_BGR2RGB),
                  caption="Eyes Hidden", use_column_width=True)
 
-    # --- Pencil Sketch
-    with col4:
+    with c4:
         sketch = pencil_sketch(img_bgr)
         st.image(cv2.cvtColor(sketch, cv2.COLOR_BGR2RGB),
                  caption="Pencil Sketch", use_column_width=True)
