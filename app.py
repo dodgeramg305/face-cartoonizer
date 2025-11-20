@@ -3,117 +3,112 @@ import cv2
 import numpy as np
 from PIL import Image
 
-st.set_page_config(layout="wide")
-st.title("🎨 Face Fun Factory – 5 Transformations + Bunny Ears")
+# -------------------------------
+# Title
+# -------------------------------
+st.title("🎨 Face Fun Factory – 5 Transformations + Cartoonish")
 
-# Load bunny ears
-BUNNY_PATH = "assets/bunny-ears.png"
-bunny = Image.open(BUNNY_PATH)
-bunny = np.array(bunny)
 
-# File upload
+# -------------------------------
+# Upload Image
+# -------------------------------
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded:
-    img = Image.open(uploaded)
+    img = Image.open(uploaded).convert("RGB")
+    img_np = np.array(img)
+
     st.success("Image uploaded successfully!")
 
-    img = np.array(img)
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # --------------------------------
+    # Transformation 1 – Original
+    # --------------------------------
+    original = img_np.copy()
 
-    # -----------------------------
-    # 1. FACE DETECTION USING HAAR
-    # -----------------------------
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
-    eye_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_eye.xml"
-    )
-
-    faces = face_cascade.detectMultiScale(img_rgb, 1.3, 5)
-
-    # -----------------------------
-    # 2. PIXELATION
-    # -----------------------------
-    def pixelate(image, size=15):
+    # --------------------------------
+    # Transformation 2 – Pixelated Face
+    # --------------------------------
+    def pixelate(image, scale=0.15):
         h, w = image.shape[:2]
-        temp = cv2.resize(image, (size, size), interpolation=cv2.INTER_LINEAR)
-        return cv2.resize(temp, (w, h), interpolation=cv2.INTER_NEAREST)
+        small = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+        return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
 
-    pixelated = img_rgb.copy()
-    for (x, y, w, h) in faces:
-        face = pixelated[y:y+h, x:x+w]
-        face = pixelate(face, size=20)
-        pixelated[y:y+h, x:x+w] = face
+    pixelated = pixelate(img_np.copy())
 
-    # -----------------------------
-    # 3. BLUE FACE FILTER
-    # -----------------------------
-    blue = img_rgb.copy()
-    for (x, y, w, h) in faces:
-        blue[y:y+h, x:x+w, :] = [50, 80, 200]  # blue
+    # --------------------------------
+    # Transformation 3 – Natural Color (NO BLUE FILTER)
+    # --------------------------------
+    def natural_color(image):
+        return image.copy()   # leaves image untouched
 
-    # -----------------------------
-    # 4. BLACK CIRCLES OVER EYES
-    # -----------------------------
-    eye_mask = img_rgb.copy()
-    for (x, y, w, h) in faces:
-        roi_color = eye_mask[y:y+h, x:x+w]
-        eyes = eye_cascade.detectMultiScale(roi_color)
+    natural = natural_color(img_np.copy())
 
-        for (ex, ey, ew, eh) in eyes:
-            center = (x + ex + ew//2, y + ey + eh//2)
-            radius = int(ew * 0.7)
-            cv2.circle(eye_mask, center, radius, (0, 0, 0), -1)
+    # --------------------------------
+    # Transformation 4 – Hide Eyes (circles)
+    # --------------------------------
+    def hide_eyes(image):
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        face = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        eyes = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
 
-    # -----------------------------
-    # 5. CARTOONIZER
-    # -----------------------------
-    gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
-    gray = cv2.medianBlur(gray, 5)
+        faces = face.detectMultiScale(gray, 1.1, 4)
+        out = image.copy()
 
-    edges = cv2.adaptiveThreshold(
-        gray, 255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY,
-        9, 9
-    )
+        for (x, y, w, h) in faces:
+            roi_gray = gray[y:y + h, x:x + w]
+            detected_eyes = eyes.detectMultiScale(roi_gray)
 
-    color = cv2.bilateralFilter(img_rgb, 9, 200, 200)
-    cartoon = cv2.bitwise_and(color, color, mask=edges)
+            for (ex, ey, ew, eh) in detected_eyes:
+                center = (x + ex + ew // 2, y + ey + eh // 2)
+                radius = int(ew * 0.7)
+                cv2.circle(out, center, radius, (0, 0, 0), -1)
 
-    # -----------------------------
-    # ADD BUNNY EARS
-    # -----------------------------
-    bunny_output = cartoon.copy()
+        return out
 
-    for (x, y, w, h) in faces:
-        # Resize bunny ears relative to face width
-        ears_w = int(w * 1.2)
-        ears_h = int(ears_w * (bunny.shape[0] / bunny.shape[1]))
+    eyes_hidden = hide_eyes(img_np.copy())
 
-        resized_ears = cv2.resize(bunny, (ears_w, ears_h))
+    # --------------------------------
+    # Transformation 5 – Cartoonish Effect
+    # --------------------------------
+    def cartoon_effect(image):
+        # Smooth colors
+        color = cv2.bilateralFilter(image, 9, 200, 200)
 
-        # Overlay position (above the face)
-        pos_x = x - int((ears_w - w) / 2)
-        pos_y = y - ears_h + 20
+        # Edge detection
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        edges = cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY,
+            9,
+            7
+        )
 
-        for i in range(ears_h):
-            for j in range(ears_w):
-                if 0 <= pos_y + i < bunny_output.shape[0] and 0 <= pos_x + j < bunny_output.shape[1]:
-                    pixel = resized_ears[i, j]
-                    if pixel[3] > 10:  # respect transparency
-                        bunny_output[pos_y + i, pos_x + j] = pixel[:3]
+        edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
+        return cv2.bitwise_and(color, edges)
 
-    # -----------------------------
-    # DISPLAY 5 PANELS
-    # -----------------------------
+    cartoonish = cartoon_effect(img_np.copy())
+
+
+    # -------------------------------
+    # Display Results (Grid Layout)
+    # -------------------------------
+    st.write("### Results")
+
     col1, col2, col3 = st.columns(3)
-    col4, col5 = st.columns(2)
+    with col1:
+        st.image(original, caption="Original", use_column_width=True)
+    with col2:
+        st.image(pixelated, caption="Pixelated Face", use_column_width=True)
+    with col3:
+        st.image(natural, caption="Natural Color", use_column_width=True)
 
-    col1.image(img_rgb, caption="Original", use_column_width=True)
-    col2.image(pixelated, caption="Pixelated Face", use_column_width=True)
-    col3.image(blue, caption="Blue Face Filter", use_column_width=True)
-    col4.image(eye_mask, caption="Eyes Hidden", use_column_width=True)
-    col5.image(bunny_output, caption="Cartoon + Bunny Ears", use_column_width=True)
+    col4, col5 = st.columns(2)
+    with col4:
+        st.image(eyes_hidden, caption="Eyes Hidden", use_column_width=True)
+    with col5:
+        st.image(cartoonish, caption="Cartoonish", use_column_width=True)
+
+else:
+    st.info("👆 Upload a JPG or PNG image to get started.")
