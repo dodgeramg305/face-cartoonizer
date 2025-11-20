@@ -11,12 +11,17 @@ st.title("Face Fun Factory – Transformations")
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 # -----------------------------
-# Function: Pixelate
+# Function: Clean Retro Pixelation
 # -----------------------------
-def pixelate(img, blocks=12):
+def pixelate(img, block_size=16):
+
     h, w = img.shape[:2]
-    temp = cv2.resize(img, (blocks, blocks), interpolation=cv2.INTER_LINEAR)
-    return cv2.resize(temp, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    # shrink and blow back up → pixel blocks
+    temp = cv2.resize(img, (w // block_size, h // block_size), interpolation=cv2.INTER_LINEAR)
+    pixelated = cv2.resize(temp, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    return pixelated
 
 # -----------------------------
 # Function: Realistic Pencil Sketch
@@ -31,7 +36,7 @@ def pencil_sketch(img):
     return cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
 
 # -----------------------------
-# Function: Hide Eyes (black circles)
+# Function: Hide Eyes (Small black circles on iris)
 # -----------------------------
 mp_face_mesh = mp.solutions.face_mesh
 
@@ -48,26 +53,29 @@ def hide_eyes(img):
 
         face = results.multi_face_landmarks[0]
 
-        # Get eye points
-        left_eye = [face.landmark[i] for i in [33, 133]]
-        right_eye = [face.landmark[i] for i in [362, 263]]
+        # THESE are the proper iris-center landmarks
+        # Left eye: 159 (upper), 145 (lower)
+        # Right eye: 386 (upper), 374 (lower)
+        left_up = face.landmark[159]
+        left_low = face.landmark[145]
+        right_up = face.landmark[386]
+        right_low = face.landmark[374]
 
-        # Convert to pixel coords
         def to_px(lm):
             return int(lm.x * w), int(lm.y * h)
 
-        lx1, ly1 = to_px(left_eye[0])
-        lx2, ly2 = to_px(left_eye[1])
-        rx1, ry1 = to_px(right_eye[0])
-        rx2, ry2 = to_px(right_eye[1])
+        lx1, ly1 = to_px(left_up)
+        lx2, ly2 = to_px(left_low)
+        rx1, ry1 = to_px(right_up)
+        rx2, ry2 = to_px(right_low)
 
-        # Eye radius based on distance between key points
-        left_r = int(np.linalg.norm([lx1 - lx2, ly1 - ly2]) * 1.2)
-        right_r = int(np.linalg.norm([rx1 - rx2, ry1 - ry2]) * 1.2)
+        # Radius = iris height * 0.7 (perfect coverage)
+        left_r = int(np.linalg.norm([lx1 - lx2, ly1 - ly2]) * 0.7)
+        right_r = int(np.linalg.norm([rx1 - rx2, ry1 - ry2]) * 0.7)
 
         output = img.copy()
 
-        # Draw black circles
+        # Draw black circles directly on iris center
         cv2.circle(output, (lx1, ly1), left_r, (0, 0, 0), -1)
         cv2.circle(output, (rx1, ry1), right_r, (0, 0, 0), -1)
 
@@ -108,4 +116,3 @@ if uploaded:
         sketch = pencil_sketch(img_bgr)
         st.image(cv2.cvtColor(sketch, cv2.COLOR_BGR2RGB),
                  caption="Pencil Sketch", use_column_width=True)
-
