@@ -1,6 +1,7 @@
 import streamlit as st
-from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 import numpy as np
+from PIL import Image, ImageFilter, ImageOps
+import face_recognition
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
 st.title("Face Fun Factory – Transformations")
@@ -8,83 +9,90 @@ st.title("Face Fun Factory – Transformations")
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 
-# -------------------------------------------------
-# A — Pixelated Face (center region)
-# -------------------------------------------------
-def pixelate_face(img, pixel_size=18):
-    w, h = img.size
-    img = img.copy()
+# ----------------------------------------------------
+# A — Pixelate Only The Face Area
+# ----------------------------------------------------
+def pixelate_face(img):
+    pil = img.copy()
+    np_img = np.array(pil)
 
-    # Face area = center square (safe for any picture)
-    box = (w//4, h//4, 3*w//4, 3*h//4)
-    face_crop = img.crop(box)
+    face_locations = face_recognition.face_locations(np_img)
 
-    small = face_crop.resize((pixel_size, pixel_size), Image.NEAREST)
-    pixelated = small.resize(face_crop.size, Image.NEAREST)
+    if not face_locations:
+        return pil  # no face detected
 
-    img.paste(pixelated, box)
-    return img
+    top, right, bottom, left = face_locations[0]
+
+    face = pil.crop((left, top, right, bottom))
+    face_small = face.resize((20, 20), resample=Image.NEAREST)
+    face_pixelated = face_small.resize(face.size, Image.NEAREST)
+
+    pil.paste(face_pixelated, (left, top))
+    return pil
 
 
-# -------------------------------------------------
-# OPTION A — Black Censor Bar (very accurate & stable)
-# -------------------------------------------------
+# ----------------------------------------------------
+# B — Eyes Hidden (Black Censor Bar)
+# ----------------------------------------------------
 def censor_bar(img):
-    img = img.copy()
-    w, h = img.size
+    pil = img.copy()
+    np_img = np.array(pil)
 
-    # Good “eye-level” guess for any portrait:
-    bar_h = h // 10
-    bar_y = h // 2.9  # well-tested middle upper area
-    
-    bar = Image.new("RGB", (w, bar_h), (0, 0, 0))
-    img.paste(bar, (0, bar_y))
+    face_locations = face_recognition.face_locations(np_img)
 
-    return img
+    if not face_locations:
+        return pil
+
+    top, right, bottom, left = face_locations[0]
+
+    face_height = bottom - top
+    bar_height = int(face_height * 0.18)
+
+    bar_top = top + int(face_height * 0.30)
+    bar_bottom = bar_top + bar_height
+
+    black_bar = Image.new("RGB", (right - left, bar_height), (0, 0, 0))
+
+    pil.paste(black_bar, (left, bar_top))
+    return pil
 
 
-# -------------------------------------------------
-# FIXED: Pencil Sketch (Clean + Good Contrast)
-# -------------------------------------------------
+# ----------------------------------------------------
+# C — Pencil Sketch (High Quality)
+# ----------------------------------------------------
 def pencil_sketch(img):
-    # Convert to grayscale
-    gray = ImageOps.grayscale(img)
+    pil = img.convert("L")
 
-    # Increase clarity before edge detection
-    enhancer = ImageEnhance.Contrast(gray)
-    gray = enhancer.enhance(1.8)
+    inverted = ImageOps.invert(pil)
+    blurred = inverted.filter(ImageFilter.GaussianBlur(radius=30))
 
-    # Edge detection
-    edges = gray.filter(ImageFilter.FIND_EDGES)
-
-    # Boost edges so sketch looks drawn, not faint
-    enhancer2 = ImageEnhance.Brightness(edges)
-    edges = enhancer2.enhance(2.5)
-
-    # Convert single-channel back to 3-channel
-    sketch = ImageOps.colorize(edges, black="black", white="white")
-
-    return sketch
+    sketch = Image.blend(pil, blurred, alpha=0.5)
+    return sketch.convert("RGB")
 
 
-# -------------------------------------------------
-# Blur Background (center remains sharp)
-# -------------------------------------------------
+# ----------------------------------------------------
+# D — Blur Background
+# ----------------------------------------------------
 def blur_background(img):
-    w, h = img.size
-    img_blur = img.filter(ImageFilter.GaussianBlur(20))
+    pil = img.copy()
+    np_img = np.array(pil)
 
-    # Center sharp rectangle
-    box = (w//6, h//6, 5*w//6, 5*h//6)
-    sharp = img.crop(box)
+    face_locations = face_recognition.face_locations(np_img)
+    if not face_locations:
+        return pil
 
-    img_blur.paste(sharp, box)
-    return img_blur
+    top, right, bottom, left = face_locations[0]
+
+    blurred = pil.filter(ImageFilter.GaussianBlur(radius=25))
+    face = pil.crop((left, top, right, bottom))
+
+    blurred.paste(face, (left, top))
+    return blurred
 
 
-# -------------------------------------------------
-# DISPLAY IMAGES
-# -------------------------------------------------
+# ----------------------------------------------------
+# Display Results
+# ----------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
@@ -105,3 +113,4 @@ if uploaded:
 
     with col5:
         st.image(blur_background(img), caption="Blur Background", use_column_width=True)
+
