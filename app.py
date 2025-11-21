@@ -1,22 +1,21 @@
 import streamlit as st
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 import numpy as np
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
-
 st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 
 # -------------------------------------------------
-# A — Pixelated Face (center area pixelation)
+# A — Pixelated Face (center region)
 # -------------------------------------------------
-def pixelate_face(img, pixel_size=12):
+def pixelate_face(img, pixel_size=18):
     w, h = img.size
     img = img.copy()
 
-    # Face area = center square
+    # Face area = center square (safe for any picture)
     box = (w//4, h//4, 3*w//4, 3*h//4)
     face_crop = img.crop(box)
 
@@ -28,43 +27,54 @@ def pixelate_face(img, pixel_size=12):
 
 
 # -------------------------------------------------
-# B — Hide Eyes (simple censor bar)
-# Works for *all* images — no AI needed
+# OPTION A — Black Censor Bar (very accurate & stable)
 # -------------------------------------------------
-def hide_eyes(img):
+def censor_bar(img):
     img = img.copy()
     w, h = img.size
 
-    # Bar across top-middle of face
+    # Good “eye-level” guess for any portrait:
     bar_h = h // 10
-    bar_y = h // 3
-
-    censor = Image.new("RGB", (w, bar_h), (0, 0, 0))
-    img.paste(censor, (0, bar_y))
+    bar_y = h // 2.9  # well-tested middle upper area
+    
+    bar = Image.new("RGB", (w, bar_h), (0, 0, 0))
+    img.paste(bar, (0, bar_y))
 
     return img
 
 
 # -------------------------------------------------
-# C — Pencil Sketch (PIL)
+# FIXED: Pencil Sketch (Clean + Good Contrast)
 # -------------------------------------------------
 def pencil_sketch(img):
+    # Convert to grayscale
     gray = ImageOps.grayscale(img)
-    inverted = ImageOps.invert(gray)
-    blur = inverted.filter(ImageFilter.GaussianBlur(25))
-    sketch = ImageOps.colorize(ImageOps.invert(Image.blend(gray, blur, 0.75)),
-                               black="black", white="white")
+
+    # Increase clarity before edge detection
+    enhancer = ImageEnhance.Contrast(gray)
+    gray = enhancer.enhance(1.8)
+
+    # Edge detection
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+
+    # Boost edges so sketch looks drawn, not faint
+    enhancer2 = ImageEnhance.Brightness(edges)
+    edges = enhancer2.enhance(2.5)
+
+    # Convert single-channel back to 3-channel
+    sketch = ImageOps.colorize(edges, black="black", white="white")
+
     return sketch
 
 
 # -------------------------------------------------
-# E — Blur Background (center sharp)
+# Blur Background (center remains sharp)
 # -------------------------------------------------
 def blur_background(img):
     w, h = img.size
-    img_blur = img.filter(ImageFilter.GaussianBlur(18))
+    img_blur = img.filter(ImageFilter.GaussianBlur(20))
 
-    # Center crop stays sharp
+    # Center sharp rectangle
     box = (w//6, h//6, 5*w//6, 5*h//6)
     sharp = img.crop(box)
 
@@ -73,7 +83,7 @@ def blur_background(img):
 
 
 # -------------------------------------------------
-# DISPLAY
+# DISPLAY IMAGES
 # -------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
@@ -88,7 +98,7 @@ if uploaded:
         st.image(pixelate_face(img), caption="Pixelated Face", use_column_width=True)
 
     with col3:
-        st.image(hide_eyes(img), caption="Eyes Hidden", use_column_width=True)
+        st.image(censor_bar(img), caption="Eyes Hidden (Censor Bar)", use_column_width=True)
 
     with col4:
         st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
