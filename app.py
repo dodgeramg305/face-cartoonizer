@@ -1,77 +1,96 @@
 import streamlit as st
 from PIL import Image, ImageFilter, ImageOps
 import numpy as np
+import face_recognition
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
 st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# -----------------------
-# Pixelation (soft)
-# -----------------------
-def pixelate(img, scale=22):
-    w, h = img.size
-    img_small = img.resize((w // scale, h // scale), resample=Image.BILINEAR)
-    return img_small.resize((w, h), Image.NEAREST)
+# --------------------------------------------------
+# FACE DETECTION using face_recognition
+# --------------------------------------------------
+def get_face_box(img):
+    np_img = np.array(img)
+    boxes = face_recognition.face_locations(np_img)
 
-# -----------------------
-# Pencil Sketch (fixed - no ImageOps.dodge)
-# -----------------------
+    if len(boxes) == 0:
+        return None
 
-def dodge(front, back):
-    """Manual dodge blend using numpy."""
-    front = np.asarray(front).astype('float')
-    back = np.asarray(back).astype('float')
+    # top, right, bottom, left
+    t, r, b, l = boxes[0]
+    return (l, t, r, b)
 
-    result = back * 255 / (255 - front + 1)
-    result[result > 255] = 255
-    result[front == 255] = 255  # avoid division issues
 
-    return Image.fromarray(result.astype('uint8'))
+# --------------------------------------------------
+# PIXELATE ONLY THE FACE
+# --------------------------------------------------
+def pixelate_face(img, pixel_size=10):
+    box = get_face_box(img)
+    if not box:
+        return img
 
+    l, t, r, b = box
+    face = img.crop((l, t, r, b))
+
+    # shrink → expand = pixelation
+    w, h = face.size
+    face_small = face.resize((w // pixel_size, h // pixel_size), Image.NEAREST)
+    face_pix = face_small.resize((w, h), Image.NEAREST)
+
+    result = img.copy()
+    result.paste(face_pix, (l, t))
+    return result
+
+
+# --------------------------------------------------
+# PENCIL SKETCH (safe method)
+# --------------------------------------------------
 def pencil_sketch(img):
     gray = ImageOps.grayscale(img)
 
-    inv = ImageOps.invert(gray)
-    blur = inv.filter(ImageFilter.GaussianBlur(18))
+    inverted = ImageOps.invert(gray)
+    blurred = inverted.filter(ImageFilter.GaussianBlur(18))
 
-    # dodge blend
-    sketch = dodge(gray, blur)
+    # Manual dodge (fixes the crash)
+    gray_np = np.array(gray).astype("float")
+    blurred_np = np.array(blurred).astype("float")
 
-    # add stronger edges
+    dodge = np.minimum(255, (gray_np * 255) / (255 - blurred_np + 1))
+    dodge_img = Image.fromarray(dodge.astype("uint8"))
+
+    # Add edges overlay
     edges = gray.filter(ImageFilter.FIND_EDGES)
     edges = ImageOps.autocontrast(edges)
 
-    final = Image.blend(sketch, edges, alpha=0.40)
+    final = Image.blend(dodge_img, edges, alpha=0.35)
     return final.convert("RGB")
 
-# -----------------------
-# Blur Background (square)
-# -----------------------
-def blur_background(img):
-    output_size = (600, 600)
 
-    blurred = img.filter(ImageFilter.GaussianBlur(radius=22)).resize(output_size)
+# --------------------------------------------------
+# BLUR BACKGROUND (same square size)
+# --------------------------------------------------
+def blur_background(img, size=400):
+    img = img.resize((size, size))
+    blurred = img.filter(ImageFilter.GaussianBlur(22))
 
-    # mask circle
-    mask = Image.new("L", output_size, 0)
-    r = int(output_size[0] * 0.33)
-    cx, cy = output_size[0] // 2, output_size[1] // 2
+    # create circular mask
+    mask = Image.new("L", (size, size), 0)
+    r = int(size * 0.38)
+    cx, cy = size // 2, size // 2
 
-    # draw circle mask manually
-    mask_pixels = mask.load()
-    for x in range(output_size[0]):
-        for y in range(output_size[1]):
-            if (x - cx)**2 + (y - cy)**2 < r*r:
-                mask_pixels[x, y] = 255
+    for x in range(size):
+        for y in range(size):
+            if (x - cx) ** 2 + (y - cy) ** 2 < r * r:
+                mask.putpixel((x, y), 255)
 
-    face = img.resize(output_size)
-    return Image.composite(face, blurred, mask)
+    return Image.composite(img, blurred, mask)
 
-# -----------------------------------------------------
-# DISPLAY OUTPUT
-# -----------------------------------------------------
+
+# --------------------------------------------------
+# SHOW RESULTS
+# --------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
@@ -82,7 +101,7 @@ if uploaded:
         st.image(img, caption="Original", use_column_width=True)
 
     with col2:
-        st.image(pixelate(img), caption="Pixelated Face", use_column_width=True)
+        st.image(pixelate_face(img), caption="Pixelated Face", use_column_width=True)
 
     with col3:
         st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
