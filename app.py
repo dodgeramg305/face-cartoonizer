@@ -7,84 +7,78 @@ st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# ----------------------------------------------------
-# UTIL: Estimate face crop (center area of image)
-# ----------------------------------------------------
-def estimate_face_region(img):
+
+# -----------------------------------------------------------------------------
+# Pixelate CENTER REGION (simulated “face pixelation”)
+# -----------------------------------------------------------------------------
+def pixelate_center(img, box_ratio=0.55, pixel_scale=16):
     w, h = img.size
-    face_width = int(w * 0.45)
-    face_height = int(h * 0.50)
 
-    cx, cy = w // 2, int(h * 0.45)
+    # Define centered square region (simulated face box)
+    box_size = int(min(w, h) * box_ratio)
+    left = (w - box_size) // 2
+    top = (h - box_size) // 2
+    right = left + box_size
+    bottom = top + box_size
 
-    x1 = max(0, cx - face_width // 2)
-    y1 = max(0, cy - face_height // 2)
-    x2 = min(w, cx + face_width // 2)
-    y2 = min(h, cy + face_height // 2)
+    face_region = img.crop((left, top, right, bottom))
 
-    return (x1, y1, x2, y2)
+    # Pixelate the cropped region
+    small = face_region.resize((box_size // pixel_scale, box_size // pixel_scale), Image.BILINEAR)
+    pixelated = small.resize((box_size, box_size), Image.NEAREST)
 
-# ----------------------------------------------------
-# PIXELATE ONLY FACE
-# ----------------------------------------------------
-def pixelate_face_only(img, scale=25):
-    img_copy = img.copy()
-    x1, y1, x2, y2 = estimate_face_region(img)
+    # Paste pixelated region back
+    result = img.copy()
+    result.paste(pixelated, (left, top))
+    return result
 
-    face_crop = img_copy.crop((x1, y1, x2, y2))
 
-    small = face_crop.resize(
-        (face_crop.width // scale, face_crop.height // scale),
-        resample=Image.BILINEAR
-    )
-    pixelated = small.resize(face_crop.size, Image.NEAREST)
-
-    img_copy.paste(pixelated, (x1, y1))
-    return img_copy
-
-# ----------------------------------------------------
-# CLEAN BRIGHT PENCIL SKETCH
-# ----------------------------------------------------
+# -----------------------------------------------------------------------------
+# Pencil Sketch (light, not dark)
+# -----------------------------------------------------------------------------
 def pencil_sketch(img):
     gray = ImageOps.grayscale(img)
     inv = ImageOps.invert(gray)
+    blur = inv.filter(ImageFilter.GaussianBlur(25))
 
-    blur = inv.filter(ImageFilter.GaussianBlur(radius=22))
-    dodge = ImageOps.blend(gray, blur, 0.1)
+    # Light sketch
+    dodge = ImageOps.blend(gray, blur, 0.2)
 
+    # Enhance lines
     edges = gray.filter(ImageFilter.FIND_EDGES)
     edges = ImageOps.autocontrast(edges)
 
-    final = Image.blend(dodge, edges, 0.25)
-    return final
+    sketch = Image.blend(dodge, edges, 0.35)
+    return sketch.convert("RGB")
 
-# ----------------------------------------------------
-# BLUR BACKGROUND (same square format)
-# ----------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Blur Background but keep same image size
+# -----------------------------------------------------------------------------
 def blur_background(img):
-    output_size = (600, 600)
+    w, h = img.size
 
-    face_center_crop = img.resize(output_size)
+    # Blur whole image
+    blurred = img.filter(ImageFilter.GaussianBlur(30))
 
-    blurred_bg = img.filter(
-        ImageFilter.GaussianBlur(radius=30)
-    ).resize(output_size)
+    # Circular mask
+    mask = Image.new("L", (w, h), 0)
+    cx, cy = w // 2, h // 2
+    r = int(min(w, h) * 0.45)
 
-    mask = Image.new("L", output_size, 0)
-    cx, cy = output_size[0] // 2, output_size[1] // 2
-    r = int(output_size[0] * 0.40)
-
-    for x in range(output_size[0]):
-        for y in range(output_size[1]):
-            if (x - cx) ** 2 + (y - cy) ** 2 < r * r:
+    for x in range(w):
+        for y in range(h):
+            if (x - cx)**2 + (y - cy)**2 < r*r:
                 mask.putpixel((x, y), 255)
 
-    final = Image.composite(face_center_crop, blurred_bg, mask)
-    return final
+    # Combine: face area stays sharp, background blurred
+    result = Image.composite(img, blurred, mask)
+    return result
 
-# ----------------------------------------------------
-# DISPLAY RESULTS
-# ----------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# DISPLAY OUTPUT
+# -----------------------------------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
@@ -95,7 +89,7 @@ if uploaded:
         st.image(img, caption="Original", use_column_width=True)
 
     with col2:
-        st.image(pixelate_face_only(img), caption="Pixelated Face (Face Only)", use_column_width=True)
+        st.image(pixelate_center(img), caption="Pixelated Face (Center)", use_column_width=True)
 
     with col3:
         st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
