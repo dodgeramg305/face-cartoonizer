@@ -1,117 +1,152 @@
 import streamlit as st
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageDraw
 import numpy as np
 
-st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
+st.set_page_config(
+    page_title="Face Fun Factory – Transformations",
+    layout="wide"
+)
+
 st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# ----------------------------------------------------
-# Helper: Convert to NumPy
-# ----------------------------------------------------
-def to_np(img):
-    return np.array(img)
 
-# ----------------------------------------------------
-# A – PIXELATE THE FACE AREA ONLY
-# ----------------------------------------------------
-def pixelate_face(img):
-    np_img = np.array(img)
-    h, w, _ = np_img.shape
+# -------------------------------------------------
+# Helper: compute a “face center” box for effects
+# (roughly eyes + nose + mouth area)
+# -------------------------------------------------
+def get_face_box(img):
+    w, h = img.size
+    cx = w // 2
+    cy = int(h * 0.45)          # a bit above exact center
+    fw = int(w * 0.50)          # width of face box
+    fh = int(h * 0.55)          # height of face box
 
-    # Crop face area (middle vertical band)
-    top = int(h * 0.20)
-    bottom = int(h * 0.80)
-    left = int(w * 0.25)
-    right = int(w * 0.75)
+    left = max(0, cx - fw // 2)
+    top = max(0, cy - fh // 2)
+    right = min(w, cx + fw // 2)
+    bottom = min(h, cy + fh // 2)
 
-    face_crop = img.crop((left, top, right, bottom))
-    face_small = face_crop.resize((20, 20), resample=Image.NEAREST)
-    face_pixelated = face_small.resize(face_crop.size, Image.NEAREST)
+    return left, top, right, bottom
+
+
+# -------------------------------------------------
+# A – Pixelate face center (eyes + nose + mouth)
+# -------------------------------------------------
+def pixelate_face_center(img, pixel_fraction=0.12):
+    """
+    Pixelates only the central face region.
+    pixel_fraction controls how chunky the blocks are.
+    """
+    img = img.convert("RGB")
+    w, h = img.size
+    left, top, right, bottom = get_face_box(img)
+
+    face = img.crop((left, top, right, bottom))
+    fw, fh = face.size
+
+    # Downscale then upscale using NEAREST to create pixelation
+    small_w = max(6, int(fw * pixel_fraction))
+    small_h = max(6, int(fh * pixel_fraction))
+    small = face.resize((small_w, small_h), resample=Image.BILINEAR)
+    pixelated = small.resize((fw, fh), resample=Image.NEAREST)
 
     out = img.copy()
-    out.paste(face_pixelated, (left, top))
+    out.paste(pixelated, (left, top))
     return out
 
-# ----------------------------------------------------
-# B – HIDE EYES (approximate based on image geometry)
-# ----------------------------------------------------
-def hide_eyes(img):
-    np_img = np.array(img)
-    h, w = np_img.shape[:2]
 
-    # Approximate eye positions
-    eye_y = int(h * 0.40)
-    left_eye_x = int(w * 0.33)
-    right_eye_x = int(w * 0.66)
-
-    radius = int(min(h, w) * 0.05)
-
-    out = img.copy()
-    draw = Image.new("RGBA", out.size)
-    draw_np = np.array(draw)
-
-    yy, xx = np.ogrid[:h, :w]
-    mask_left = (xx - left_eye_x)**2 + (yy - eye_y)**2 <= radius**2
-    mask_right = (xx - right_eye_x)**2 + (yy - eye_y)**2 <= radius**2
-
-    np_img[mask_left] = [0, 0, 0]
-    np_img[mask_right] = [0, 0, 0]
-
-    return Image.fromarray(np_img)
-
-# ----------------------------------------------------
-# C – PENCIL SKETCH (strong + clean)
-# ----------------------------------------------------
-def pencil_sketch(img):
-    gray = img.convert("L")
-    inv = Image.fromarray(255 - np.array(gray))
-    blur = inv.filter(ImageFilter.GaussianBlur(25))
-
-    sketch_np = (np.array(gray) * 255 / (np.array(blur) + 1))
-    sketch_np = sketch_np.clip(0, 255).astype(np.uint8)
-
-    return Image.fromarray(sketch_np).convert("RGB")
-
-# ----------------------------------------------------
-# E – BLUR BACKGROUND ONLY
-# ----------------------------------------------------
-def blur_background(img):
+# -------------------------------------------------
+# B – Hide eyes with small circles (approx positions)
+# -------------------------------------------------
+def hide_eyes_with_circles(img):
+    img = img.convert("RGB")
     w, h = img.size
-    blurred = img.filter(ImageFilter.GaussianBlur(12))
+    out = img.copy()
+    draw = ImageDraw.Draw(out)
 
-    # Face area = center 50%
-    left = int(w * 0.25)
-    right = int(w * 0.75)
-    top = int(h * 0.20)
-    bottom = int(h * 0.80)
+    # Approximate eye locations as fractions of image size
+    eye_y = int(h * 0.35)
+    left_x = int(w * 0.35)
+    right_x = int(w * 0.65)
 
-    sharp_face = img.crop((left, top, right, bottom))
-    blurred.paste(sharp_face, (left, top))
+    radius = int(min(w, h) * 0.06)  # smaller circles than before
 
-    return blurred
+    for x in (left_x, right_x):
+        draw.ellipse(
+            (x - radius, eye_y - radius, x + radius, eye_y + radius),
+            fill=(0, 0, 0)
+        )
 
-# ----------------------------------------------------
-# DISPLAY RESULTS
-# ----------------------------------------------------
+    return out
+
+
+# -------------------------------------------------
+# C – Pencil Sketch (no black output)
+# -------------------------------------------------
+def pencil_sketch(img):
+    img = img.convert("RGB")
+    gray = img.convert("L")
+    gray_np = np.array(gray).astype(np.float32)
+
+    # Invert & blur
+    inverted = 255 - gray_np
+    inverted_img = Image.fromarray(inverted.astype(np.uint8))
+    blurred = inverted_img.filter(ImageFilter.GaussianBlur(radius=15))
+    blurred_np = np.array(blurred).astype(np.float32)
+
+    # Color dodge blend: sketch = gray * 255 / (255 - blurred)
+    dodge = gray_np * 255.0 / (255.0 - blurred_np + 1e-5)
+    dodge = np.clip(dodge, 0, 255).astype(np.uint8)
+
+    sketch = Image.fromarray(dodge, mode="L")
+    return sketch.convert("RGB")
+
+
+# -------------------------------------------------
+# E – Blur background, keep face center sharp
+# -------------------------------------------------
+def blur_background_keep_face_sharp(img):
+    img = img.convert("RGB")
+    w, h = img.size
+    left, top, right, bottom = get_face_box(img)
+
+    blurred = img.filter(ImageFilter.GaussianBlur(radius=12))
+
+    face = img.crop((left, top, right, bottom))
+    out = blurred.copy()
+    out.paste(face, (left, top))
+    return out
+
+
+# -------------------------------------------------
+# Main UI
+# -------------------------------------------------
 if uploaded:
-    img = Image.open(uploaded).convert("RGB")
+    pil_img = Image.open(uploaded).convert("RGB")
 
+    # Top row: Original, Pixelated Face, Eyes Hidden
     col1, col2, col3 = st.columns(3)
-    col4, col5 = st.columns(2)
 
     with col1:
-        st.image(img, caption="Original", use_column_width=True)
+        st.image(pil_img, caption="Original", use_column_width=True)
 
     with col2:
-        st.image(pixelate_face(img), caption="Pixelated Face", use_column_width=True)
+        pix = pixelate_face_center(pil_img)
+        st.image(pix, caption="Pixelated Face Center", use_column_width=True)
 
     with col3:
-        st.image(hide_eyes(img), caption="Eyes Hidden", use_column_width=True)
+        eyes_hidden = hide_eyes_with_circles(pil_img)
+        st.image(eyes_hidden, caption="Eyes Hidden", use_column_width=True)
+
+    # Bottom row: Pencil Sketch, Blur Background
+    col4, col5 = st.columns(2)
 
     with col4:
-        st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
+        sketch_img = pencil_sketch(pil_img)
+        st.image(sketch_img, caption="Pencil Sketch", use_column_width=True)
 
     with col5:
-        st.image(blur_background(img), caption="Blur Background", use_column_width=True)
+        blurred_bg = blur_background_keep_face_sharp(pil_img)
+        st.image(blurred_bg, caption="Blur Background (Face Sharp)", use_column_width=True)
