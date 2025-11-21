@@ -1,83 +1,101 @@
 import streamlit as st
 from PIL import Image, ImageFilter, ImageOps
 import numpy as np
-import cv2
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
 st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
+# -------------------------------------------------------------------
+# FACE ESTIMATOR (PIL-only approximate method)
+# This avoids cv2. It finds the brightest area (usually the face).
+# -------------------------------------------------------------------
+def approximate_face_box(img):
+    gray = ImageOps.grayscale(img)
+    arr = np.array(gray)
 
-# ==========================
-# FACE PIXELATION (ONLY FACE)
-# ==========================
-def pixelate_face(img_pil, scale=18):
-    img = np.array(img_pil)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    # Find bright region by threshold
+    thresh = np.percentile(arr, 75)
+    mask = arr > thresh
 
-    # Haar cascade (built into OpenCV)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    ys, xs = np.where(mask)
 
-    faces = face_cascade.detectMultiScale(gray, 1.2, 5)
+    if len(xs) == 0:
+        return (0, 0, img.size[0], img.size[1])
 
-    if len(faces) == 0:
-        return img_pil  # no face found
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
 
-    for (x, y, w, h) in faces:
-        face_region = img[y:y+h, x:x+w]
+    # Expand box a bit
+    pad = int(min(img.size) * 0.08)
+    x1 = max(0, x1 - pad)
+    y1 = max(0, y1 - pad)
+    x2 = min(img.size[0], x2 + pad)
+    y2 = min(img.size[1], y2 + pad)
 
-        # pixelate only this rectangle
-        small = cv2.resize(face_region, (w // scale, h // scale), interpolation=cv2.INTER_LINEAR)
-        pixelated = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+    return (x1, y1, x2, y2)
 
-        img[y:y+h, x:x+w] = pixelated
+# -------------------------------------------------------------------
+# Pixelate only face
+# -------------------------------------------------------------------
+def pixelate_face(img, scale=20):
+    img2 = img.copy()
+    w, h = img.size
 
-    return Image.fromarray(img)
+    # estimate face box
+    x1, y1, x2, y2 = approximate_face_box(img)
 
+    face = img2.crop((x1, y1, x2, y2))
+    fw, fh = face.size
 
-# ==========================
-# PENCIL SKETCH
-# ==========================
+    face_small = face.resize((max(1, fw//scale), max(1, fh//scale)), Image.NEAREST)
+    face_pix = face_small.resize((fw, fh), Image.NEAREST)
+
+    img2.paste(face_pix, (x1, y1, x2, y2))
+    return img2
+
+# -------------------------------------------------------------------
+# Pencil sketch
+# -------------------------------------------------------------------
 def pencil_sketch(img):
     gray = ImageOps.grayscale(img)
     inv = ImageOps.invert(gray)
-    blur = inv.filter(ImageFilter.GaussianBlur(radius=18))
+    blur = inv.filter(ImageFilter.GaussianBlur(15))
 
-    # Safe dodge formula
-    gray_np = np.array(gray).astype('float')
-    blur_np = np.array(blur).astype('float')
+    # dodge
+    dodge = ImageOps.blend(gray, blur, 0.5)
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    edges = ImageOps.autocontrast(edges)
 
-    result = np.minimum(255, (gray_np * 255) / (255 - blur_np + 1e-4))
-    result = result.astype("uint8")
+    final = Image.blend(dodge, edges, 0.45)
+    return final.convert("RGB")
 
-    return Image.fromarray(result)
-
-
-# ==========================
-# BLUR BACKGROUND (SAME BOX SIZE)
-# ==========================
+# -------------------------------------------------------------------
+# Blur background (same size as others, with circular focus)
+# -------------------------------------------------------------------
 def blur_background(img):
-    output_size = (400, 400)  # same size as other images
-    base = img.resize(output_size)
+    output = img.resize((600, 600))
+    blurred = output.filter(ImageFilter.GaussianBlur(25))
 
-    blurred = base.filter(ImageFilter.GaussianBlur(radius=22))
+    w, h = output.size
+    mask = Image.new("L", (w, h), 0)
 
-    mask = Image.new("L", output_size, 0)
-    cx, cy = output_size[0]//2, output_size[1]//2
-    r = int(output_size[0] * 0.40)
+    # circular mask
+    cx, cy = w//2, h//2
+    r = int(w * 0.35)
 
-    for x in range(output_size[0]):
-        for y in range(output_size[1]):
+    for x in range(w):
+        for y in range(h):
             if (x - cx)**2 + (y - cy)**2 < r*r:
                 mask.putpixel((x, y), 255)
 
-    return Image.composite(base, blurred, mask)
+    final = Image.composite(output, blurred, mask)
+    return final
 
-
-# ==========================
-# DISPLAY RESULTS
-# ==========================
+# -------------------------------------------------------------------
+# DISPLAY
+# -------------------------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
