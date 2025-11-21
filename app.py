@@ -7,92 +7,120 @@ st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# -------------------------------------------------------
-# Unified display size (MATCHES blur background box size)
-# -------------------------------------------------------
-DISPLAY_SIZE = (600, 600)
 
-def resize_for_display(img):
-    return img.resize(DISPLAY_SIZE)
+# =======================================================
+#  FACE DETECTION USING PIL (fast + Streamlit-friendly)
+# =======================================================
+def detect_face_bbox(img):
+    """
+    Lightweight face detection using a simple heuristic.
+    This avoids heavy libraries like OpenCV or mediapipe,
+    and works well for centered portrait photos (class project safe).
+    """
 
-# -----------------------
-# Pixelate ONLY the face
-# -----------------------
-def pixelate_face_only(img):
-    img_gray = ImageOps.grayscale(img)
-    arr = np.array(img_gray)
+    img_small = img.resize((256, 256)).convert("L")
+    arr = np.array(img_small)
 
-    # face-like prior using center area
-    h, w = arr.shape
-    cx, cy = w // 2, h // 2
-    box_w, box_h = w // 3, h // 3
+    # crude face region detection (brightest region assumption)
+    ys, xs = np.where(arr > np.percentile(arr, 60))
 
-    x1, y1 = cx - box_w // 2, cy - box_h // 2
-    x2, y2 = cx + box_w // 2, cy + box_h // 2
+    if len(xs) == 0:
+        return None  # no detectable face region
 
-    face_region = img.crop((x1, y1, x2, y2))
+    x1, y1 = xs.min(), ys.min()
+    x2, y2 = xs.max(), ys.max()
 
-    # pixelate
-    face_small = face_region.resize((20, 20), Image.NEAREST)
-    pixelated_face = face_small.resize(face_region.size, Image.NEAREST)
+    # Rescale to original image
+    W, H = img.size
+    scale_x = W / 256
+    scale_y = H / 256
 
-    # paste back
-    result = img.copy()
-    result.paste(pixelated_face, (x1, y1))
-    return result
+    return (
+        int(x1 * scale_x),
+        int(y1 * scale_y),
+        int(x2 * scale_x),
+        int(y2 * scale_y)
+    )
 
-# -----------------------
-# Pencil Sketch (lighter)
-# -----------------------
+
+# =======================================================
+#  PIXELATE ONLY FACE
+# =======================================================
+def pixelate_face_only(img, blocks=12):
+    face_box = detect_face_bbox(img)
+    if face_box is None:
+        return img  # return original if no face detected
+
+    x1, y1, x2, y2 = face_box
+    face = img.crop((x1, y1, x2, y2))
+
+    # pixelate face only
+    w, h = face.size
+    small = face.resize((max(1, w // blocks), max(1, h // blocks)), Image.NEAREST)
+    pixelated_face = small.resize((w, h), Image.NEAREST)
+
+    # paste back over original
+    out = img.copy()
+    out.paste(pixelated_face, (x1, y1))
+    return out
+
+
+# =======================================================
+#  PENCIL SKETCH (clean + strong edges)
+# =======================================================
 def pencil_sketch(img):
     gray = ImageOps.grayscale(img)
     inv = ImageOps.invert(gray)
     blur = inv.filter(ImageFilter.GaussianBlur(18))
 
-    dodge = ImageOps.blend(gray, blur, 0.2)
+    gray_np = np.array(gray).astype(float)
+    blur_np = np.array(blur).astype(float)
 
+    dodge = gray_np * 255 / (255 - blur_np + 1)
+    dodge = np.clip(dodge, 0, 255).astype("uint8")
+
+    # Add some edge detail
     edges = gray.filter(ImageFilter.FIND_EDGES)
     edges = ImageOps.autocontrast(edges)
+    edges_np = np.array(edges).astype(float)
 
-    final = Image.blend(dodge, edges, 0.25)
-    return final.convert("RGB")
+    final = (0.75 * dodge + 0.25 * edges_np).astype("uint8")
 
-# -----------------------
-# Blur Background
-# -----------------------
+    return Image.fromarray(final).convert("RGB")
+
+
+# =======================================================
+#  BLUR BACKGROUND (same size box as others)
+# =======================================================
 def blur_background(img):
-    blurred = img.filter(ImageFilter.GaussianBlur(radius=25)).resize(DISPLAY_SIZE)
-
-    mask = Image.new("L", DISPLAY_SIZE, 0)
-    r = int(DISPLAY_SIZE[0] * 0.35)
-    cx, cy = DISPLAY_SIZE[0] // 2, DISPLAY_SIZE[1] // 2
-
-    for x in range(DISPLAY_SIZE[0]):
-        for y in range(DISPLAY_SIZE[1]):
-            if (x - cx)**2 + (y - cy)**2 < r*r:
-                mask.putpixel((x, y), 255)
-
-    face = img.resize(DISPLAY_SIZE)
-    final = Image.composite(face, blurred, mask)
-    return final
+    blurred = img.filter(ImageFilter.GaussianBlur(20))
+    return blurred
 
 
-# -----------------------------------------------------
-# DISPLAY RESULTS (ALL BOXES SAME SIZE)
-# -----------------------------------------------------
+# =======================================================
+#  DISPLAY OUTPUT LAYOUT
+# =======================================================
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # TOP ROW (3 small boxes)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.image(resize_for_display(img), caption="Original", use_column_width=True)
+        st.image(img, caption="Original", use_column_width=True)
 
     with col2:
-        st.image(resize_for_display(pixelate_face_only(img)), caption="Pixelated Face Only", use_column_width=True)
+        st.image(pixelate_face_only(img), caption="Pixelated Face Only", use_column_width=True)
 
     with col3:
-        st.image(resize_for_display(pencil_sketch(img)), caption="Pencil Sketch", use_column_width=True)
-
-    with col4:
         st.image(blur_background(img), caption="Blur Background", use_column_width=True)
+
+    # spacing
+    st.markdown("---")
+
+    # BOTTOM ROW (FULL WIDTH pencil sketch)
+    st.image(
+        pencil_sketch(img),
+        caption="Pencil Sketch",
+        use_column_width=True
+    )
