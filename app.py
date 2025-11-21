@@ -7,79 +7,78 @@ st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# -----------------------
-# Pixelate ONLY the face — DO NOT TOUCH (you liked this)
-# -----------------------
-def pixelate_face_only(img, block_size=20):
-    w, h = img.size
-    img_np = np.array(img)
+# -------------------------------------------------------
+# Unified display size (MATCHES blur background box size)
+# -------------------------------------------------------
+DISPLAY_SIZE = (600, 600)
 
-    # Rough face bounding box estimation (center vertical region)
-    face_top = int(h * 0.20)
-    face_bottom = int(h * 0.75)
-    face_left = int(w * 0.25)
-    face_right = int(w * 0.75)
-
-    face_region = img_np[face_top:face_bottom, face_left:face_right]
-
-    # Pixelation
-    small = Image.fromarray(face_region).resize(
-        (face_region.shape[1] // block_size, face_region.shape[0] // block_size),
-        resample=Image.NEAREST
-    )
-    pixelated = small.resize((face_region.shape[1], face_region.shape[0]), Image.NEAREST)
-    img_np[face_top:face_bottom, face_left:face_right] = np.array(pixelated)
-
-    return Image.fromarray(img_np)
-
+def resize_for_display(img):
+    return img.resize(DISPLAY_SIZE)
 
 # -----------------------
-# Pencil Sketch (fixed version, not dark, Streamlit-safe)
+# Pixelate ONLY the face
+# -----------------------
+def pixelate_face_only(img):
+    img_gray = ImageOps.grayscale(img)
+    arr = np.array(img_gray)
+
+    # face-like prior using center area
+    h, w = arr.shape
+    cx, cy = w // 2, h // 2
+    box_w, box_h = w // 3, h // 3
+
+    x1, y1 = cx - box_w // 2, cy - box_h // 2
+    x2, y2 = cx + box_w // 2, cy + box_h // 2
+
+    face_region = img.crop((x1, y1, x2, y2))
+
+    # pixelate
+    face_small = face_region.resize((20, 20), Image.NEAREST)
+    pixelated_face = face_small.resize(face_region.size, Image.NEAREST)
+
+    # paste back
+    result = img.copy()
+    result.paste(pixelated_face, (x1, y1))
+    return result
+
+# -----------------------
+# Pencil Sketch (lighter)
 # -----------------------
 def pencil_sketch(img):
     gray = ImageOps.grayscale(img)
     inv = ImageOps.invert(gray)
-    blur = inv.filter(ImageFilter.GaussianBlur(radius=18))
+    blur = inv.filter(ImageFilter.GaussianBlur(18))
 
-    # Convert to numpy
-    g = np.array(gray).astype("float")
-    b = np.array(blur).astype("float")
+    dodge = ImageOps.blend(gray, blur, 0.2)
 
-    # Dodge blend formula
-    dodge = g * 255 / (255 - b + 1)
-    dodge = np.clip(dodge, 0, 255).astype("uint8")
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    edges = ImageOps.autocontrast(edges)
 
-    return Image.fromarray(dodge).convert("RGB")
-
+    final = Image.blend(dodge, edges, 0.25)
+    return final.convert("RGB")
 
 # -----------------------
-# Blur Background (same size as others, centered)
+# Blur Background
 # -----------------------
 def blur_background(img):
-    # Output size should match grid size
-    out_size = (400, 400)
+    blurred = img.filter(ImageFilter.GaussianBlur(radius=25)).resize(DISPLAY_SIZE)
 
-    # Resize background
-    blurred = img.filter(ImageFilter.GaussianBlur(18)).resize(out_size)
+    mask = Image.new("L", DISPLAY_SIZE, 0)
+    r = int(DISPLAY_SIZE[0] * 0.35)
+    cx, cy = DISPLAY_SIZE[0] // 2, DISPLAY_SIZE[1] // 2
 
-    # Create mask (circle)
-    mask = Image.new("L", out_size, 0)
-    r = int(out_size[0] * 0.38)
-    cx, cy = out_size[0] // 2, out_size[1] // 2
-
-    for x in range(out_size[0]):
-        for y in range(out_size[1]):
-            if (x - cx)**2 + (y - cy)**2 <= r*r:
+    for x in range(DISPLAY_SIZE[0]):
+        for y in range(DISPLAY_SIZE[1]):
+            if (x - cx)**2 + (y - cy)**2 < r*r:
                 mask.putpixel((x, y), 255)
 
-    # Crop and resize original face
-    face = img.resize(out_size)
-
-    return Image.composite(face, blurred, mask)
+    face = img.resize(DISPLAY_SIZE)
+    final = Image.composite(face, blurred, mask)
+    return final
 
 
 # -----------------------------------------------------
-# DISPLAY RESULTS
+# DISPLAY RESULTS (ALL BOXES SAME SIZE)
 # -----------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
@@ -87,13 +86,13 @@ if uploaded:
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.image(img, caption="Original", use_column_width=True)
+        st.image(resize_for_display(img), caption="Original", use_column_width=True)
 
     with col2:
-        st.image(pixelate_face_only(img), caption="Pixelated Face Only", use_column_width=True)
+        st.image(resize_for_display(pixelate_face_only(img)), caption="Pixelated Face Only", use_column_width=True)
 
     with col3:
-        st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
+        st.image(resize_for_display(pencil_sketch(img)), caption="Pencil Sketch", use_column_width=True)
 
     with col4:
         st.image(blur_background(img), caption="Blur Background", use_column_width=True)
