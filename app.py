@@ -1,7 +1,6 @@
 import streamlit as st
-import numpy as np
 from PIL import Image, ImageFilter, ImageOps
-import face_recognition
+import numpy as np
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
 st.title("Face Fun Factory – Transformations")
@@ -9,108 +8,97 @@ st.title("Face Fun Factory – Transformations")
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 
-# ----------------------------------------------------
-# A — Pixelate Only The Face Area
-# ----------------------------------------------------
+# -----------------------------
+# PIXELATE JUST THE FACE AREA
+# -----------------------------
 def pixelate_face(img):
-    pil = img.copy()
-    np_img = np.array(pil)
+    w, h = img.size
 
-    face_locations = face_recognition.face_locations(np_img)
+    # define a center box (face area estimate)
+    box = (int(w*0.25), int(h*0.25), int(w*0.75), int(h*0.75))
 
-    if not face_locations:
-        return pil  # no face detected
+    face = img.crop(box)
 
-    top, right, bottom, left = face_locations[0]
+    # pixelate
+    small = face.resize((25, 25), resample=Image.NEAREST)
+    pixelated = small.resize(face.size, Image.NEAREST)
 
-    face = pil.crop((left, top, right, bottom))
-    face_small = face.resize((20, 20), resample=Image.NEAREST)
-    face_pixelated = face_small.resize(face.size, Image.NEAREST)
-
-    pil.paste(face_pixelated, (left, top))
-    return pil
+    output = img.copy()
+    output.paste(pixelated, box)
+    return output
 
 
-# ----------------------------------------------------
-# B — Eyes Hidden (Black Censor Bar)
-# ----------------------------------------------------
+# -----------------------------
+# CENSOR BAR
+# -----------------------------
 def censor_bar(img):
-    pil = img.copy()
-    np_img = np.array(pil)
+    w, h = img.size
+    bar_height = int(h * 0.10)        # 10% of image height
+    bar_y = int(h * 0.30)             # position around eye level
 
-    face_locations = face_recognition.face_locations(np_img)
+    bar = Image.new("RGB", (w, bar_height), (0, 0, 0))
 
-    if not face_locations:
-        return pil
-
-    top, right, bottom, left = face_locations[0]
-
-    face_height = bottom - top
-    bar_height = int(face_height * 0.18)
-
-    bar_top = top + int(face_height * 0.30)
-    bar_bottom = bar_top + bar_height
-
-    black_bar = Image.new("RGB", (right - left, bar_height), (0, 0, 0))
-
-    pil.paste(black_bar, (left, bar_top))
-    return pil
+    output = img.copy()
+    output.paste(bar, (0, bar_y))
+    return output
 
 
-# ----------------------------------------------------
-# C — Pencil Sketch (High Quality)
-# ----------------------------------------------------
+# -----------------------------
+# PENCIL SKETCH (PIL)
+# -----------------------------
 def pencil_sketch(img):
-    pil = img.convert("L")
+    gray = ImageOps.grayscale(img)
+    inverted = ImageOps.invert(gray)
 
-    inverted = ImageOps.invert(pil)
-    blurred = inverted.filter(ImageFilter.GaussianBlur(radius=30))
+    blur = inverted.filter(ImageFilter.GaussianBlur(25))
 
-    sketch = Image.blend(pil, blurred, alpha=0.5)
-    return sketch.convert("RGB")
+    sketch = ImageOps.colorize(ImageOps.autocontrast(ImageChops.dodge(gray, blur)), black="black", white="white")
+    return sketch
 
 
-# ----------------------------------------------------
-# D — Blur Background
-# ----------------------------------------------------
+# -----------------------------
+# BLUR BACKGROUND (keep center sharp)
+# -----------------------------
 def blur_background(img):
-    pil = img.copy()
-    np_img = np.array(pil)
+    w, h = img.size
 
-    face_locations = face_recognition.face_locations(np_img)
-    if not face_locations:
-        return pil
+    # estimated face area box
+    box = (int(w*0.25), int(h*0.25), int(w*0.75), int(h*0.75))
 
-    top, right, bottom, left = face_locations[0]
+    # blur full image
+    blurred = img.filter(ImageFilter.GaussianBlur(15))
 
-    blurred = pil.filter(ImageFilter.GaussianBlur(radius=25))
-    face = pil.crop((left, top, right, bottom))
-
-    blurred.paste(face, (left, top))
+    # paste sharp face
+    face_region = img.crop(box)
+    blurred.paste(face_region, box)
     return blurred
 
 
-# ----------------------------------------------------
-# Display Results
-# ----------------------------------------------------
+# -----------------------------
+# DISPLAY ALL RESULTS
+# -----------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
     col1, col2, col3 = st.columns(3)
     col4, col5 = st.columns(2)
 
+    # Original
     with col1:
         st.image(img, caption="Original", use_column_width=True)
 
+    # Pixelated Face
     with col2:
         st.image(pixelate_face(img), caption="Pixelated Face", use_column_width=True)
 
+    # Censor Bar
     with col3:
         st.image(censor_bar(img), caption="Eyes Hidden (Censor Bar)", use_column_width=True)
 
+    # Pencil Sketch
     with col4:
         st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
 
+    # Blur Background
     with col5:
         st.image(blur_background(img), caption="Blur Background", use_column_width=True)
-
