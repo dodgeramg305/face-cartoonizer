@@ -1,74 +1,85 @@
 import streamlit as st
-from PIL import Image, ImageFilter, ImageOps
 import numpy as np
+from PIL import Image, ImageFilter, ImageDraw, ImageOps
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
 st.title("Face Fun Factory – Transformations")
 
-# --------------------------------------------------
-# 1. Pixelate face (Pillow only)
-# --------------------------------------------------
-def pixelate(image, pixel_size=18):
-    small = image.resize(
-        (image.width // pixel_size, image.height // pixel_size),
-        resample=Image.NEAREST
-    )
-    return small.resize(image.size, Image.NEAREST)
-
-# --------------------------------------------------
-# 2. Pencil Sketch (Pillow only)
-# --------------------------------------------------
-def pencil_sketch(image):
-    gray = ImageOps.grayscale(image)
-    inverted = ImageOps.invert(gray)
-
-    blur = inverted.filter(ImageFilter.GaussianBlur(radius=25))
-    blended = Image.blend(gray, blur, alpha=0.6)
-
-    edges = blended.filter(ImageFilter.EDGE_ENHANCE_MORE)
-    return edges.convert("RGB")
-
-# --------------------------------------------------
-# 3. Blur Background (Pillow only)
-# --------------------------------------------------
-def blur_background(image):
-    blur = image.filter(ImageFilter.GaussianBlur(radius=25))
-
-    mask = Image.new("L", image.size, 255)
-    mask_draw = ImageDraw = __import__("ImageDraw", fromlist=[""]).ImageDraw(mask)
-
-    w, h = image.size
-    box_w = int(w * 0.55)
-    box_h = int(h * 0.55)
-    x1 = (w - box_w) // 2
-    y1 = (h - box_h) // 2
-    x2 = x1 + box_w
-    y2 = y1 + box_h
-
-    mask_draw.rectangle([x1, y1, x2, y2], fill=0)
-
-    return Image.composite(image, blur, mask)
-
-# --------------------------------------------------
-# MAIN UI
-# --------------------------------------------------
-
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
+
+# ---------------------------------------------------
+#  A) PIXELATE FACE (lighter pixelation)
+# ---------------------------------------------------
+def pixelate(img, block_size=18):
+    pil = Image.fromarray(img)
+    w, h = pil.size
+
+    small = pil.resize((w // block_size, h // block_size), Image.NEAREST)
+    result = small.resize((w, h), Image.NEAREST)
+
+    return result
+
+
+# ---------------------------------------------------
+#  B) PENCIL SKETCH (clean + stable version)
+# ---------------------------------------------------
+def pencil_sketch(img):
+    pil = Image.fromarray(img).convert("L")  # grayscale
+    inverted = ImageOps.invert(pil)
+    blurred = inverted.filter(ImageFilter.GaussianBlur(22))
+
+    # Dodge blend
+    blend = Image.blend(pil, blurred, 0.2)
+
+    return blend.convert("RGB")  # return RGB for Streamlit
+
+
+# ---------------------------------------------------
+#  C) BLUR BACKGROUND (circular sharp face)
+# ---------------------------------------------------
+def blur_background(img):
+    pil = Image.fromarray(img)
+
+    blurred = pil.filter(ImageFilter.GaussianBlur(25))
+
+    mask = Image.new("L", pil.size, 0)
+    draw = ImageDraw.Draw(mask)
+
+    cx, cy = pil.size[0] // 2, pil.size[1] // 2
+    r = min(pil.size) // 3
+
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=255)
+
+    result = Image.composite(pil, blurred, mask)
+
+    return result
+
+
+# ---------------------------------------------------
+#            DISPLAY OUTPUT
+# ---------------------------------------------------
 if uploaded:
-    img = Image.open(uploaded).convert("RGB")
+
+    img = Image.open(uploaded)
+    img_np = np.array(img)
 
     col1, col2, col3 = st.columns(3)
-    col4, _ = st.columns([2,1])
 
+    # ORIGINAL
     with col1:
         st.image(img, caption="Original", use_column_width=True)
 
+    # PIXELATED FACE
     with col2:
-        st.image(pixelate(img), caption="Pixelated Face", use_column_width=True)
+        pix = pixelate(img_np)
+        st.image(pix, caption="Pixelated Face", use_column_width=True)
 
+    # PENCIL SKETCH
     with col3:
-        st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
+        sketch = pencil_sketch(img_np)
+        st.image(sketch, caption="Pencil Sketch", use_column_width=True)
 
-    with col4:
-        st.image(blur_background(img), caption="Blur Background", use_column_width=True)
+    # BLUR BACKGROUND (full width)
+    st.subheader("")
+    st.image(blur_background(img_np), caption="Blur Background", use_column_width=True)
