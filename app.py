@@ -1,101 +1,82 @@
 import streamlit as st
-import cv2
+from PIL import Image, ImageFilter, ImageOps
 import numpy as np
-from PIL import Image
 
 st.set_page_config(page_title="Face Fun Factory – Transformations", layout="wide")
+
 st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-# ---------------------------------
-# A – Pixelate Face Only
-# ---------------------------------
-def pixelate_face_only(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+# -------------------------------------------------
+# A — Pixelated Face (center area pixelation)
+# -------------------------------------------------
+def pixelate_face(img, pixel_size=12):
+    w, h = img.size
+    img = img.copy()
 
-    output = img.copy()
+    # Face area = center square
+    box = (w//4, h//4, 3*w//4, 3*h//4)
+    face_crop = img.crop(box)
 
-    for (x, y, w, h) in faces:
-        face_roi = output[y:y+h, x:x+w]
-        small = cv2.resize(face_roi, (20, 20), interpolation=cv2.INTER_LINEAR)
-        pixelated = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
-        output[y:y+h, x:x+w] = pixelated
+    small = face_crop.resize((pixel_size, pixel_size), Image.NEAREST)
+    pixelated = small.resize(face_crop.size, Image.NEAREST)
 
-    return output
+    img.paste(pixelated, box)
+    return img
 
-# ---------------------------------
-# B – Blur Eyes Only
-# ---------------------------------
-def blur_eyes(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
-    eye_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_eye.xml"
-    )
+# -------------------------------------------------
+# B — Hide Eyes (simple censor bar)
+# Works for *all* images — no AI needed
+# -------------------------------------------------
+def hide_eyes(img):
+    img = img.copy()
+    w, h = img.size
 
-    output = img.copy()
+    # Bar across top-middle of face
+    bar_h = h // 10
+    bar_y = h // 3
 
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-    for (fx, fy, fw, fh) in faces:
-        face_roi_gray = gray[fy:fy+fh, fx:fx+fw]
-        face_roi_color = output[fy:fy+fh, fx:fx+fw]
+    censor = Image.new("RGB", (w, bar_h), (0, 0, 0))
+    img.paste(censor, (0, bar_y))
 
-        eyes = eye_cascade.detectMultiScale(face_roi_gray, 1.2, 3)
+    return img
 
-        for (ex, ey, ew, eh) in eyes:
-            eye_section = face_roi_color[ey:ey+eh, ex:ex+ew]
-            blurred_eye = cv2.GaussianBlur(eye_section, (51, 51), 0)
-            face_roi_color[ey:ey+eh, ex:ex+ew] = blurred_eye
 
-    return output
-
-# ---------------------------------
-# C – Pencil Sketch
-# ---------------------------------
+# -------------------------------------------------
+# C — Pencil Sketch (PIL)
+# -------------------------------------------------
 def pencil_sketch(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    inv = 255 - gray
-    blur = cv2.GaussianBlur(inv, (31, 31), 0)
-    sketch = cv2.divide(gray, 255 - blur, scale=256)
-    return cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
+    gray = ImageOps.grayscale(img)
+    inverted = ImageOps.invert(gray)
+    blur = inverted.filter(ImageFilter.GaussianBlur(25))
+    sketch = ImageOps.colorize(ImageOps.invert(Image.blend(gray, blur, 0.75)),
+                               black="black", white="white")
+    return sketch
 
-# ---------------------------------
-# D – Blur Background
-# ---------------------------------
+
+# -------------------------------------------------
+# E — Blur Background (center sharp)
+# -------------------------------------------------
 def blur_background(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    w, h = img.size
+    img_blur = img.filter(ImageFilter.GaussianBlur(18))
 
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+    # Center crop stays sharp
+    box = (w//6, h//6, 5*w//6, 5*h//6)
+    sharp = img.crop(box)
 
-    if len(faces) == 0:
-        return img
+    img_blur.paste(sharp, box)
+    return img_blur
 
-    (x, y, w, h) = faces[0]
 
-    blurred = cv2.GaussianBlur(img, (55, 55), 0)
-    output = blurred.copy()
-    output[y:y+h, x:x+w] = img[y:y+h, x:x+w]
-    return output
-
-# ---------------------------------
-# DISPLAY RESULTS
-# ---------------------------------
+# -------------------------------------------------
+# DISPLAY
+# -------------------------------------------------
 if uploaded:
-    img = Image.open(uploaded)
-    img = np.array(img)
-    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    img = Image.open(uploaded).convert("RGB")
 
     col1, col2, col3 = st.columns(3)
     col4, col5 = st.columns(2)
@@ -104,21 +85,13 @@ if uploaded:
         st.image(img, caption="Original", use_column_width=True)
 
     with col2:
-        pix = pixelate_face_only(img_bgr)
-        st.image(cv2.cvtColor(pix, cv2.COLOR_BGR2RGB),
-                 caption="Pixelated Face", use_column_width=True)
+        st.image(pixelate_face(img), caption="Pixelated Face", use_column_width=True)
 
     with col3:
-        blurred = blur_eyes(img_bgr)
-        st.image(cv2.cvtColor(blurred, cv2.COLOR_BGR2RGB),
-                 caption="Eyes Blurred", use_column_width=True)
+        st.image(hide_eyes(img), caption="Eyes Hidden", use_column_width=True)
 
     with col4:
-        sketch = pencil_sketch(img_bgr)
-        st.image(cv2.cvtColor(sketch, cv2.COLOR_BGR2RGB),
-                 caption="Pencil Sketch", use_column_width=True)
+        st.image(pencil_sketch(img), caption="Pencil Sketch", use_column_width=True)
 
     with col5:
-        blur_bg = blur_background(img_bgr)
-        st.image(cv2.cvtColor(blur_bg, cv2.COLOR_BGR2RGB),
-                 caption="Blur Background", use_column_width=True)
+        st.image(blur_background(img), caption="Blur Background", use_column_width=True)
