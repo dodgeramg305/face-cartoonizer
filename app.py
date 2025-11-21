@@ -7,99 +7,84 @@ st.title("Face Fun Factory – Transformations")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-
-# ----------------------------------------------------------
-# FACE ESTIMATION (simple center-face crop, PIL-compatible)
-# ----------------------------------------------------------
-def get_face_box(img):
-    """
-    Very simple heuristic: assume the face is in the center 40% of the image.
-    Works for portrait photos where the user uploads a normal selfie/headshot.
-    """
+# -----------------------
+# Pixelate ONLY the face — DO NOT TOUCH (you liked this)
+# -----------------------
+def pixelate_face_only(img, block_size=20):
     w, h = img.size
-    box_w, box_h = int(w * 0.45), int(h * 0.45)
+    img_np = np.array(img)
 
-    left = (w - box_w) // 2
-    top = (h - box_h) // 2
-    right = left + box_w
-    bottom = top + box_h
+    # Rough face bounding box estimation (center vertical region)
+    face_top = int(h * 0.20)
+    face_bottom = int(h * 0.75)
+    face_left = int(w * 0.25)
+    face_right = int(w * 0.75)
 
-    return (left, top, right, bottom)
+    face_region = img_np[face_top:face_bottom, face_left:face_right]
 
+    # Pixelation
+    small = Image.fromarray(face_region).resize(
+        (face_region.shape[1] // block_size, face_region.shape[0] // block_size),
+        resample=Image.NEAREST
+    )
+    pixelated = small.resize((face_region.shape[1], face_region.shape[0]), Image.NEAREST)
+    img_np[face_top:face_bottom, face_left:face_right] = np.array(pixelated)
 
-# ----------------------------------------------------------
-# PIXELATE ONLY THE FACE
-# ----------------------------------------------------------
-def pixelate_face_only(img, pixel_scale=12):
-    img = img.copy()
-    face_box = get_face_box(img)
-
-    face = img.crop(face_box)
-    fw, fh = face.size
-
-    # pixelate
-    small = face.resize((fw // pixel_scale, fh // pixel_scale), Image.NEAREST)
-    pixelated = small.resize((fw, fh), Image.NEAREST)
-
-    # paste back
-    img.paste(pixelated, face_box)
-    return img
+    return Image.fromarray(img_np)
 
 
-# ----------------------------------------------------------
-# PENCIL SKETCH — balanced, not too dark
-# ----------------------------------------------------------
+# -----------------------
+# Pencil Sketch (fixed version, not dark, Streamlit-safe)
+# -----------------------
 def pencil_sketch(img):
     gray = ImageOps.grayscale(img)
-
     inv = ImageOps.invert(gray)
-    blur = inv.filter(ImageFilter.GaussianBlur(radius=25))
+    blur = inv.filter(ImageFilter.GaussianBlur(radius=18))
 
-    # Dodge blend
-    dodge = ImageOps.blend(gray, blur, 0.2)
+    # Convert to numpy
+    g = np.array(gray).astype("float")
+    b = np.array(blur).astype("float")
 
-    # Edge enhancement for real sketch feeling
-    edges = gray.filter(ImageFilter.FIND_EDGES)
-    edges = ImageOps.autocontrast(edges)
+    # Dodge blend formula
+    dodge = g * 255 / (255 - b + 1)
+    dodge = np.clip(dodge, 0, 255).astype("uint8")
 
-    final = Image.blend(dodge, edges, 0.35)
-    return final.convert("RGB")
+    return Image.fromarray(dodge).convert("RGB")
 
 
-# ----------------------------------------------------------
-# BLUR BACKGROUND (square output)
-# ----------------------------------------------------------
+# -----------------------
+# Blur Background (same size as others, centered)
+# -----------------------
 def blur_background(img):
-    output_size = (500, 500)
+    # Output size should match grid size
+    out_size = (400, 400)
 
-    # Resize original
-    face = img.resize(output_size)
+    # Resize background
+    blurred = img.filter(ImageFilter.GaussianBlur(18)).resize(out_size)
 
-    # Blur copy
-    blurred = img.filter(ImageFilter.GaussianBlur(radius=30)).resize(output_size)
+    # Create mask (circle)
+    mask = Image.new("L", out_size, 0)
+    r = int(out_size[0] * 0.38)
+    cx, cy = out_size[0] // 2, out_size[1] // 2
 
-    # Create centered circle mask
-    mask = Image.new("L", output_size, 0)
-    cx, cy = output_size[0] // 2, output_size[1] // 2
-    r = int(output_size[0] * 0.38)
-
-    for x in range(output_size[0]):
-        for y in range(output_size[1]):
+    for x in range(out_size[0]):
+        for y in range(out_size[1]):
             if (x - cx)**2 + (y - cy)**2 <= r*r:
                 mask.putpixel((x, y), 255)
 
-    final = Image.composite(face, blurred, mask)
-    return final
+    # Crop and resize original face
+    face = img.resize(out_size)
+
+    return Image.composite(face, blurred, mask)
 
 
-# ----------------------------------------------------------
-# DISPLAY GRID
-# ----------------------------------------------------------
+# -----------------------------------------------------
+# DISPLAY RESULTS
+# -----------------------------------------------------
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
 
-    col1, col2, col3 = st.columns(3)
-    col4 = st.columns(1)[0]
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         st.image(img, caption="Original", use_column_width=True)
