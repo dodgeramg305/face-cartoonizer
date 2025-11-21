@@ -1,4 +1,4 @@
-face_recognition
+
 numpy
 Pillow
 streamlit
