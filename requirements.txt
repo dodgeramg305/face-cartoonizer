@@ -1,5 +1,5 @@
-
-numpy
-Pillow
 streamlit
+Pillow
+numpy
+face_recognition   # optional - remove if not using face detection
 
